@@ -131,3 +131,29 @@ Confirm against REAL robocopy (the things the Linux stub could not prove):
 - `C:\smoke_dst\_bench\*` is cleaned up afterward (unless `-KeepData`).
 - In `-SplitBySize`, `big.bin` is copied only in the `large` pass and `small.txt`
   only in the `small` pass → `/MAX` / `/MIN` size routing works.
+
+## GUI: `gui/FastCopy.ps1` + `gui/MainWindow.xaml`
+
+WPF front end hosted in PowerShell (Windows only). Source/destination pickers,
+robocopy options (threads, retries/wait, `/J`, split-by-size, `/MIR`, `/COMPRESS`,
+dry-run `/L`), a live command preview, a streaming log, and an "Auto-tune /MT"
+button that launches `scripts/Measure-RoboCopyThroughput.ps1` in its own console.
+
+Run on Windows:
+```
+powershell -ExecutionPolicy Bypass -File .\gui\FastCopy.ps1
+```
+
+Architecture note: the pure, testable logic (`New-RoboCopyArgs`,
+`Format-RoboCommand`, `Get-RoboExitMeaning`, `Get-SizeSplitPasses`) is separated
+from `Start-FastCopyGui`. The file guards its entry point with
+`if ($MyInvocation.InvocationName -ne '.')`, so dot-sourcing it loads the
+functions WITHOUT launching WPF — that's how the logic is unit-tested on Linux.
+
+Status — logic-verified, GUI NOT yet run. Confirmed on PowerShell 7.6.2 (Linux):
+XAML is well-formed, all 19 `x:Name` controls match the names the script resolves,
+the script parses clean, and all `New-RoboCopyArgs`/`Format-RoboCommand`/etc. unit
+checks pass. NOT verified (needs Windows + a display): WPF rendering, the
+`FolderBrowserDialog` pickers, and the live `robocopy` streaming path (Process +
+`Register-ObjectEvent` output queue drained by a `DispatcherTimer`). Manually
+exercise the window on Windows before relying on it.
