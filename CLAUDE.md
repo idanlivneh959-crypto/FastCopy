@@ -99,3 +99,35 @@ build/finish the script, the corrected version MUST address these:
 7. Non-issue (was wrongly flagged): the `Run-RoboTest` verb emits NO warning for a plain
    script [verified] — that only happens on module import. Pure style nit. `*.*` is the
    robocopy default, so it's redundant but harmless.
+
+## Status of `scripts/Measure-RoboCopyThroughput.ps1`
+
+Logic-verified, NOT yet hardware-verified. All checks so far ran against a fake
+robocopy stub on PowerShell 7.6.2 (Linux) — argument array, exit-code handling,
+`/BYTES` Copied-column parsing, ranking, cleanup, and non-interactive rendering
+are confirmed. The actual robocopy invocation has never run, because robocopy is
+Windows-only. Run the smoke test below on real Windows before trusting it on a
+production copy.
+
+### Windows smoke test (run before trusting on real data)
+```powershell
+# 1. Small source with mixed file sizes (one >256MB to exercise the split)
+mkdir C:\smoke_src
+fsutil file createnew C:\smoke_src\big.bin 300000000   # ~300 MB
+"hi" | Out-File C:\smoke_src\small.txt
+
+# 2. Fast pass
+.\scripts\Measure-RoboCopyThroughput.ps1 -Source C:\smoke_src `
+    -Destination C:\smoke_dst -LogDir C:\smoke_logs -ThreadTests 4,8
+
+# 3. Two-pass split
+.\scripts\Measure-RoboCopyThroughput.ps1 -Source C:\smoke_src `
+    -Destination C:\smoke_dst -LogDir C:\smoke_logs -ThreadTests 4,8 -SplitBySize
+```
+Confirm against REAL robocopy (the things the Linux stub could not prove):
+- RESULTS shows nonzero `MBCopied`/`MBps` → the regex matches real robocopy's
+  `/BYTES` summary and reads the Copied column.
+- A clean copy reports `ExitCode` 0–7 and `Failed = False` → exit-code mapping is right.
+- `C:\smoke_dst\_bench\*` is cleaned up afterward (unless `-KeepData`).
+- In `-SplitBySize`, `big.bin` is copied only in the `large` pass and `small.txt`
+  only in the `small` pass → `/MAX` / `/MIN` size routing works.
