@@ -69,21 +69,33 @@ start "" robocopy "\\src\share\FolderB" "\\dst\share\FolderB" *.* /E /MT:16 /R:1
 
 A draft PowerShell script that tests several `/MT` values, measures throughput,
 picks the fastest, and optionally runs a two-pass small/large copy was reviewed.
-When we build/finish it, the corrected version MUST address these:
+Findings were validated against PowerShell 7.6.2 (installed in the dev container).
+Note: robocopy is Windows-only and cannot run on Linux, so items tagged
+[robocopy-docs] rest on documented behavior, not local execution. When we
+build/finish the script, the corrected version MUST address these:
 
-1. **Syntax**: use `[math]::Round(...)`, not `:Round(...)` (the draft fails to parse).
-2. **Keep the summary**: do NOT pass `/NJS` (and avoid `/NJH`) on benchmark runs —
-   the `Bytes :` summary line we parse lives in the job summary that `/NJS` removes.
-3. **Reset state between runs**: robocopy skips already-copied files, so back-to-back
-   tests against the same destination make runs 2..n no-ops. Copy each test to a
-   unique throwaway destination (e.g. `$Destination\_bench\MT$Threads`) and delete
+1. **`:Round` is a RUNTIME error, not a parse error.** [verified] The script parses
+   clean, but `:Round(...)` throws `The term ':Round' is not recognized...` the moment
+   `Run-RoboTest` builds its return object. On Windows the first robocopy copy actually
+   runs, then the function throws while assembling its result — so it never returns,
+   `$results` stays empty, and `$best[0]` blows up too. Fix: `[math]::Round(...)`.
+2. **Keep the summary**: do NOT pass `/NJS` (and avoid `/NJH`) on benchmark runs.
+   [robocopy-docs] The `Bytes :` line the script parses lives in the job summary that
+   `/NJS` removes, so `$bytes` would always be 0 → every result 0 MBps.
+3. **Reset state between runs** [robocopy-docs]: robocopy skips already-copied files, so
+   back-to-back tests against the same destination make runs 2..n no-ops. Copy each test
+   to a unique throwaway destination (e.g. `$Destination\_bench\MT$Threads`) and delete
    it afterward, or benchmark against a fixed representative sample.
 4. **Pass extra args as an array, then splat** — not a single space-joined string.
-   `"/MIN:268435457 /J"` is sent to robocopy as ONE token; use `@('/MIN:268435457','/J')`.
-   Also avoid appending an empty `""` arg in the no-extra-args path.
-5. **Byte parsing**: add `/BYTES` so robocopy emits raw byte counts (default output uses
-   unit suffixes like `1.234 g` that the `[\d,]+` regex misparses). Parse the **Copied**
-   column, not **Total** (a no-op run still reports full Total → fake high MBps).
-6. **Check `$LASTEXITCODE`**: robocopy success is 0–7 (1 = copied, 3 = copied+extra, etc.);
-   >=8 is failure. Don't count failed/partial copies as valid timing samples.
-7. Minor: `Run-RoboTest` uses unapproved verb `Run` (load warning); `*.*` is redundant.
+   [verified] `"/MIN:268435457 /J"` reaches the native command as ONE argument
+   (`</MIN:268435457 /J>`); the empty-string default passes a stray empty arg (`<>`).
+   `@('/MIN:268435457','/J')` splatted with `@extra` produces two clean args.
+5. **Byte parsing** [verified]: default robocopy output uses unit suffixes (e.g.
+   `1.234 g`) and the `([\d,]+)` regex captures just `1`; it also reads the **Total**
+   column, not **Copied** (a no-op run still reports full Total → fake high MBps).
+   Add `/BYTES` for raw counts and parse the **Copied** column (2nd number).
+6. **Check `$LASTEXITCODE`** [robocopy-docs]: robocopy success is 0–7 (1 = copied,
+   3 = copied+extra, etc.); >=8 is failure. Don't count failed/partial copies as samples.
+7. Non-issue (was wrongly flagged): the `Run-RoboTest` verb emits NO warning for a plain
+   script [verified] — that only happens on module import. Pure style nit. `*.*` is the
+   robocopy default, so it's redundant but harmless.
