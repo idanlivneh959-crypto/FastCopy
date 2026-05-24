@@ -64,3 +64,26 @@ start "" robocopy "\\src\share\FolderB" "\\dst\share\FolderB" *.* /E /MT:16 /R:1
 ### Real-world tips
 - Benchmark `/MT` on a representative subfolder first; the best value is environment-specific.
 - For live migrations, bulk seed first, then re-run robocopy for the delta/catch-up pass.
+
+## Auto-tune benchmark script — required fixes (TODO)
+
+A draft PowerShell script that tests several `/MT` values, measures throughput,
+picks the fastest, and optionally runs a two-pass small/large copy was reviewed.
+When we build/finish it, the corrected version MUST address these:
+
+1. **Syntax**: use `[math]::Round(...)`, not `:Round(...)` (the draft fails to parse).
+2. **Keep the summary**: do NOT pass `/NJS` (and avoid `/NJH`) on benchmark runs —
+   the `Bytes :` summary line we parse lives in the job summary that `/NJS` removes.
+3. **Reset state between runs**: robocopy skips already-copied files, so back-to-back
+   tests against the same destination make runs 2..n no-ops. Copy each test to a
+   unique throwaway destination (e.g. `$Destination\_bench\MT$Threads`) and delete
+   it afterward, or benchmark against a fixed representative sample.
+4. **Pass extra args as an array, then splat** — not a single space-joined string.
+   `"/MIN:268435457 /J"` is sent to robocopy as ONE token; use `@('/MIN:268435457','/J')`.
+   Also avoid appending an empty `""` arg in the no-extra-args path.
+5. **Byte parsing**: add `/BYTES` so robocopy emits raw byte counts (default output uses
+   unit suffixes like `1.234 g` that the `[\d,]+` regex misparses). Parse the **Copied**
+   column, not **Total** (a no-op run still reports full Total → fake high MBps).
+6. **Check `$LASTEXITCODE`**: robocopy success is 0–7 (1 = copied, 3 = copied+extra, etc.);
+   >=8 is failure. Don't count failed/partial copies as valid timing samples.
+7. Minor: `Run-RoboTest` uses unapproved verb `Run` (load warning); `*.*` is redundant.
