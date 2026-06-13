@@ -60,15 +60,36 @@ function New-RoboCopyArgs {
     return $roboArgs.ToArray()
 }
 
-function Format-RoboCommand {
+function ConvertTo-RoboArgLine {
+    <#
+        Joins robocopy args into a single command-line string, quoting any token
+        that contains whitespace. Used both for the on-screen preview and for
+        ProcessStartInfo.Arguments — .NET Framework 4.8 (Windows PowerShell 5.1)
+        has no ProcessStartInfo.ArgumentList, so we must build the string ourselves.
+    #>
     [CmdletBinding()]
     [OutputType([string])]
     param([Parameter(Mandatory)][string[]]$RoboArgs)
 
     $quoted = foreach ($a in $RoboArgs) {
-        if ($a -match '\s') { '"{0}"' -f $a } else { $a }
+        if ($a -match '\s') {
+            # Double any trailing backslashes before the closing quote, otherwise
+            # Windows arg parsing (CommandLineToArgvW) reads \" as an escaped quote.
+            $escaped = $a -replace '(\\+)$', '$1$1'
+            '"{0}"' -f $escaped
+        } else {
+            $a
+        }
     }
-    return 'robocopy ' + ($quoted -join ' ')
+    return ($quoted -join ' ')
+}
+
+function Format-RoboCommand {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string[]]$RoboArgs)
+
+    return 'robocopy ' + (ConvertTo-RoboArgLine -RoboArgs $RoboArgs)
 }
 
 function Get-RoboExitMeaning {
@@ -248,7 +269,9 @@ function Start-Pass {
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'robocopy'
-    foreach ($a in $pass.Args) { $psi.ArgumentList.Add($a) }
+    # ProcessStartInfo.ArgumentList does not exist on .NET Framework 4.8 (PS 5.1),
+    # so build a quoted argument string instead (matches the on-screen preview).
+    $psi.Arguments = ConvertTo-RoboArgLine -RoboArgs $pass.Args
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true
     $psi.UseShellExecute        = $false

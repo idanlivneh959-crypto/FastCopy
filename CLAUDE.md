@@ -145,15 +145,40 @@ powershell -ExecutionPolicy Bypass -File .\gui\FastCopy.ps1
 ```
 
 Architecture note: the pure, testable logic (`New-RoboCopyArgs`,
-`Format-RoboCommand`, `Get-RoboExitMeaning`, `Get-SizeSplitPasses`) is separated
-from `Start-FastCopyGui`. The file guards its entry point with
+`Format-RoboCommand`, `Get-RoboExitMeaning`, `Get-SizeSplitPasses`, plus the
+shared quoting helper `ConvertTo-RoboArgLine`) is separated from
+`Start-FastCopyGui`. The file guards its entry point with
 `if ($MyInvocation.InvocationName -ne '.')`, so dot-sourcing it loads the
-functions WITHOUT launching WPF — that's how the logic is unit-tested on Linux.
+functions WITHOUT launching WPF — that's how the logic is unit-tested.
 
-Status — logic-verified, GUI NOT yet run. Confirmed on PowerShell 7.6.2 (Linux):
-XAML is well-formed, all 19 `x:Name` controls match the names the script resolves,
-the script parses clean, and all `New-RoboCopyArgs`/`Format-RoboCommand`/etc. unit
-checks pass. NOT verified (needs Windows + a display): WPF rendering, the
-`FolderBrowserDialog` pickers, and the live `robocopy` streaming path (Process +
-`Register-ObjectEvent` output queue drained by a `DispatcherTimer`). Manually
-exercise the window on Windows before relying on it.
+### TARGET RUNTIME: Windows PowerShell 5.1 (.NET Framework 4.8)
+This is natively-shipped PowerShell and the REQUIRED target — not PS 7. Code must
+avoid PS 7-isms: no `??` / `?.` / ternary / `&&` / `||` / `clean{}` blocks, and
+no APIs that exist only on .NET Core / .NET 5+. The one that already bit us:
+
+- **`ProcessStartInfo.ArgumentList` does NOT exist on .NET Framework 4.8.** [verified
+  on PS 5.1] The GUI builds the robocopy command as a quoted `.Arguments` string via
+  `ConvertTo-RoboArgLine` instead. That helper also backs `Format-RoboCommand`, so the
+  on-screen preview is byte-for-byte the command actually launched. It quotes any token
+  containing whitespace and doubles trailing backslashes so a quoted path ending in `\`
+  can't escape its closing quote. (`$PSNativeCommandUseErrorActionPreference` in the
+  benchmark script is a harmless no-op on 5.1; 5.1 native commands never throw on
+  nonzero exit, which is the behavior we want anyway.)
+
+### Status — VERIFIED ON WINDOWS 11 / PS 5.1 against REAL robocopy
+Test harness: `tests/Run-AllTests.ps1` (23/23) + `tests/Probe-LiveCopyPath.ps1` (6/6).
+Confirmed with the actual `robocopy.exe`:
+- Benchmark script: `/BYTES` Copied-column parse (nonzero MBCopied), exit-code
+  mapping (robocopy exit 1 → not failed), per-test `_bench` isolation, cleanup, and
+  **ground-truth size routing** — small pass copied the small files only, large pass
+  copied only the >256MB file.
+- Pure functions: all arg-building / preview / exit-meaning / split checks pass.
+- WPF: `MainWindow.xaml` loads via `XamlReader` and all 19 `x:Name` controls resolve.
+- Live-copy path: robocopy launched through the GUI's `ProcessStartInfo.Arguments`
+  mechanism copied files into a **destination path containing spaces** (the case the
+  old `.ArgumentList` code would have crashed on).
+
+Still NOT exercised interactively (no automated way): clicking through the actual
+window — `FolderBrowserDialog` pickers, the Start/Cancel buttons, and the live log
+streaming via `Register-ObjectEvent` + `DispatcherTimer` during a real copy. The
+underlying mechanisms are verified; the click-path itself should be eyeballed once.
